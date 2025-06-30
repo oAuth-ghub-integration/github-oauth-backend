@@ -11,7 +11,8 @@ const {
   getRepositoryIssues,
   getRepositoryReleases,
   getSummary,
-  getSyncStatus
+  getSyncStatus,
+  getUsers
 } = require('../controllers/githubController');
 
 const router = express.Router();
@@ -59,5 +60,8 @@ router.get('/repositories/:repoFullName/releases', requireAuth, getRepositoryRel
 
 // Get all data for a user (summary)
 router.get('/summary', requireAuth, getSummary);
+
+// Paginated endpoints
+router.get('/users', requireAuth, getUsers);
 
 module.exports = router; 

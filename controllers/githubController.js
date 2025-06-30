@@ -31,6 +31,7 @@ const removeIntegration = async (req, res) => {
     await Issue.deleteMany({ userId: githubId });
     await Release.deleteMany({ userId: githubId });
     await GitUser.deleteMany({ userId: githubId });
+    await SyncStatus.deleteOne({ userId: githubId });
     // Destroy session
     req.session.destroy(err => {
       if (err) console.error("Session destroy error:", err);
@@ -46,33 +47,59 @@ const removeIntegration = async (req, res) => {
 const getEntityData = async (req, res) => {
   const githubId = req.session.githubId;
   const entity = req.params.entity;
+  const search = req.query.search;
   try {
-    let result;
+    let model, sort = {};
     switch (entity) {
       case 'organizations':
-        result = await Org.find({ userId: githubId });
+        model = Org;
+        sort = { name: 1 };
         break;
       case 'repos':
-        result = await Repo.find({ userId: githubId });
+        model = Repo;
+        sort = { name: 1 };
         break;
       case 'commits':
-        result = await Commit.find({ userId: githubId });
+        model = Commit;
+        sort = { date: -1 };
         break;
       case 'pulls':
-        result = await Pull.find({ userId: githubId });
+        model = Pull;
+        sort = { createdAt: -1 };
         break;
       case 'issues':
-        result = await Issue.find({ userId: githubId });
+        model = Issue;
+        sort = { createdAt: -1 };
         break;
       case 'changelogs':
-        result = await Release.find({ userId: githubId });
+        model = Release;
+        sort = { publishedAt: -1 };
         break;
       case 'users':
-        result = await GitUser.find({ userId: githubId });
+        model = GitUser;
+        sort = { login: 1 };
         break;
       default:
         return res.status(400).send("Unknown entity");
     }
+    let query = { userId: githubId };
+    if (search && search.trim().length > 0) {
+      // Dynamically get all string field names except _id, __v, userId
+      const allStringFields = Object.entries(model.schema.paths)
+        .filter(([field, schemaType]) =>
+          !['_id', '__v', 'userId'].includes(field) &&
+          schemaType.instance === 'String'
+        )
+        .map(([field]) => field);
+      const regex = new RegExp(search.trim(), 'i');
+      query['$or'] = allStringFields.map(field => ({ [field]: regex }));
+    }
+    const result = await paginatedQuery(
+      model,
+      query,
+      sort,
+      req
+    );
     res.json(result);
   } catch (err) {
     console.error("Error fetching data for", entity, err);
@@ -100,37 +127,32 @@ const getProfile = async (req, res) => {
   }
 };
 
-// Get user's organizations
-const getOrganizations = async (req, res) => {
-  try {
-    const orgs = await Org.find({ userId: req.session.githubId });
-    res.json(orgs);
-  } catch (error) {
-    console.error('Error fetching organizations:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
-// Get user's repositories
-const getRepositories = async (req, res) => {
-  try {
-    const repos = await Repo.find({ userId: req.session.githubId });
-    res.json(repos);
-  } catch (error) {
-    console.error('Error fetching repositories:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
+// Helper for paginated response
+async function paginatedQuery(model, query, sort, req) {
+  const { page = 1, limit = 50 } = req.query;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const [data, total] = await Promise.all([
+    model.find(query).sort(sort).skip(skip).limit(parseInt(limit)),
+    model.countDocuments(query)
+  ]);
+  return {
+    data,
+    page: parseInt(page),
+    limit: parseInt(limit),
+    total
+  };
+}
 
 // Get commits for a specific repository
 const getRepositoryCommits = async (req, res) => {
   try {
-    const commits = await Commit.find({ 
-      userId: req.session.githubId,
-      repoFullName: req.params.repoFullName 
-    }).sort({ date: -1 });
-    
-    res.json(commits);
+    const result = await paginatedQuery(
+      Commit,
+      { userId: req.session.githubId, repoFullName: req.params.repoFullName },
+      { date: -1 },
+      req
+    );
+    res.json(result);
   } catch (error) {
     console.error('Error fetching commits:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -140,12 +162,13 @@ const getRepositoryCommits = async (req, res) => {
 // Get pull requests for a specific repository
 const getRepositoryPulls = async (req, res) => {
   try {
-    const pulls = await Pull.find({ 
-      userId: req.session.githubId,
-      repoFullName: req.params.repoFullName 
-    }).sort({ createdAt: -1 });
-    
-    res.json(pulls);
+    const result = await paginatedQuery(
+      Pull,
+      { userId: req.session.githubId, repoFullName: req.params.repoFullName },
+      { createdAt: -1 },
+      req
+    );
+    res.json(result);
   } catch (error) {
     console.error('Error fetching pull requests:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -155,12 +178,13 @@ const getRepositoryPulls = async (req, res) => {
 // Get issues for a specific repository
 const getRepositoryIssues = async (req, res) => {
   try {
-    const issues = await Issue.find({ 
-      userId: req.session.githubId,
-      repoFullName: req.params.repoFullName 
-    }).sort({ createdAt: -1 });
-    
-    res.json(issues);
+    const result = await paginatedQuery(
+      Issue,
+      { userId: req.session.githubId, repoFullName: req.params.repoFullName },
+      { createdAt: -1 },
+      req
+    );
+    res.json(result);
   } catch (error) {
     console.error('Error fetching issues:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -170,12 +194,13 @@ const getRepositoryIssues = async (req, res) => {
 // Get releases for a specific repository
 const getRepositoryReleases = async (req, res) => {
   try {
-    const releases = await Release.find({ 
-      userId: req.session.githubId,
-      repoFullName: req.params.repoFullName 
-    }).sort({ publishedAt: -1 });
-    
-    res.json(releases);
+    const result = await paginatedQuery(
+      Release,
+      { userId: req.session.githubId, repoFullName: req.params.repoFullName },
+      { publishedAt: -1 },
+      req
+    );
+    res.json(result);
   } catch (error) {
     console.error('Error fetching releases:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -218,6 +243,54 @@ const getSyncStatus = async (req, res) => {
   res.json(status || {});
 };
 
+// Get user's organizations
+const getOrganizations = async (req, res) => {
+  try {
+    const result = await paginatedQuery(
+      Org,
+      { userId: req.session.githubId },
+      { name: 1 },
+      req
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching organizations:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get user's repositories
+const getRepositories = async (req, res) => {
+  try {
+    const result = await paginatedQuery(
+      Repo,
+      { userId: req.session.githubId },
+      { name: 1 },
+      req
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching repositories:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get users for a specific repository
+const getUsers = async (req, res) => {
+  try {
+    const result = await paginatedQuery(
+      GitUser,
+      { userId: req.session.githubId },
+      { login: 1 },
+      req
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   getStatus,
   removeIntegration,
@@ -230,5 +303,6 @@ module.exports = {
   getRepositoryIssues,
   getRepositoryReleases,
   getSummary,
-  getSyncStatus
+  getSyncStatus,
+  getUsers
 }; 
