@@ -9,7 +9,6 @@ const {
   getRepositoryCommits,
   getRepositoryPulls,
   getRepositoryIssues,
-  getRepositoryReleases,
   getSummary,
   getSyncStatus,
   getUsers
@@ -54,9 +53,6 @@ router.get('/repositories/:repoFullName/pulls', requireAuth, getRepositoryPulls)
 
 // Get issues for a specific repository
 router.get('/repositories/:repoFullName/issues', requireAuth, getRepositoryIssues);
-
-// Get releases for a specific repository
-router.get('/repositories/:repoFullName/releases', requireAuth, getRepositoryReleases);
 
 // Get all data for a user (summary)
 router.get('/summary', requireAuth, getSummary);

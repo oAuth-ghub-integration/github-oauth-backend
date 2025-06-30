@@ -1,6 +1,7 @@
 const axios = require('axios');
-const { Integration, GitUser, Org, Repo, Commit, Pull, Issue, Release } = require('../models');
+const { Integration, GitUser, Org, Repo, Commit, Pull, Issue } = require('../models');
 const SyncStatus = require('../models/SyncStatus');
+const { bulkImportForkedRepos } = require('../utils/bulkImport');
 
 // Helper: Fetch and store GitHub data for the connected user
 async function fetchAndStoreGitHubData(accessToken, userId, username) {
@@ -60,6 +61,12 @@ async function fetchAndStoreGitHubData(accessToken, userId, username) {
       if (repoPage.length < perPage) break;
       page++;
     }
+    // Logging forked and non-forked repo counts
+    const forkedRepos = repos.filter(r => r.fork);
+    const nonForkedRepos = repos.filter(r => !r.fork);
+    console.log('Forked repos:', forkedRepos.length, 'Non-forked repos:', nonForkedRepos.length);
+    // Build a Set of forked repo full_names for extra safeguard
+    const forkedRepoNames = new Set(forkedRepos.map(r => r.full_name));
     await Repo.deleteMany({ userId });
     for (let repo of repos) {
       await Repo.create({
@@ -82,126 +89,129 @@ async function fetchAndStoreGitHubData(accessToken, userId, username) {
     await Commit.deleteMany({ userId });
     await Pull.deleteMany({ userId });
     await Issue.deleteMany({ userId });
-    await Release.deleteMany({ userId });
 
-    // Commits
-    for (let repo of repos) {
-      const [owner, repoName] = repo.full_name.split('/');
-      const repoFullName = repo.full_name;
-      page = 1;
-      const commitsPerPage = 100;
-      while (true) {
-        const commitsRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/commits?per_page=${commitsPerPage}&page=${page}`, { headers: authHeader });
-        const commitPage = commitsRes.data;
-        if (commitPage.length === 0) break;
-        for (let commitData of commitPage) {
-          await Commit.create({
-            userId,
-            repoFullName: repoFullName,
-            sha: commitData.sha,
-            message: commitData.commit.message,
-            authorName: commitData.commit.author.name,
-            authorLogin: commitData.author ? commitData.author.login : "",
-            date: commitData.commit.author.date,
-            url: commitData.html_url
-          });
-        }
-        if (commitPage.length < commitsPerPage) break;
-        page++;
-      }
-    }
-    await updateSyncStatus(userId, { commits: true });
+    // Commits, Pulls, Issues are now handled by bulk import only
+    // for (let repo of repos) {
+    //   if (forkedRepoNames.has(repo.full_name)) continue; // Extra safeguard
+    //   const [owner, repoName] = repo.full_name.split('/');
+    //   const repoFullName = repo.full_name;
+    //   page = 1;
+    //   const commitsPerPage = 100;
+    //   while (true) {
+    //     const commitsRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/commits?per_page=${commitsPerPage}&page=${page}`, { headers: authHeader });
+    //     const commitPage = commitsRes.data;
+    //     if (commitPage.length === 0) break;
+    //     for (let commitData of commitPage) {
+    //       await Commit.create({
+    //         userId,
+    //         repoFullName: repoFullName,
+    //         sha: commitData.sha,
+    //         message: commitData.commit.message,
+    //         authorName: commitData.commit.author.name,
+    //         authorLogin: commitData.author ? commitData.author.login : "",
+    //         date: commitData.commit.author.date,
+    //         url: commitData.html_url
+    //       });
+    //     }
+    //     if (commitPage.length < commitsPerPage) break;
+    //     page++;
+    //   }
+    // }
+    // await updateSyncStatus(userId, { commits: true });
 
-    // Pulls
-    for (let repo of repos) {
-      const [owner, repoName] = repo.full_name.split('/');
-      const repoFullName = repo.full_name;
-      page = 1;
-      const pullsPerPage = 100;
-      while (true) {
-        const pullsRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/pulls?state=all&per_page=${pullsPerPage}&page=${page}`, { headers: authHeader });
-        const pullPage = pullsRes.data;
-        if (pullPage.length === 0) break;
-        for (let pr of pullPage) {
-          await Pull.create({
-            userId,
-            repoFullName: repoFullName,
-            number: pr.number,
-            title: pr.title,
-            state: pr.state,
-            authorLogin: pr.user.login,
-            createdAt: pr.created_at,
-            mergedAt: pr.merged_at,
-            url: pr.html_url
-          });
-        }
-        if (pullPage.length < pullsPerPage) break;
-        page++;
-      }
-    }
-    await updateSyncStatus(userId, { pulls: true });
+    // for (let repo of repos) {
+    //   if (forkedRepoNames.has(repo.full_name)) continue;
+    //   const [owner, repoName] = repo.full_name.split('/');
+    //   const repoFullName = repo.full_name;
+    //   page = 1;
+    //   const pullsPerPage = 100;
+    //   while (true) {
+    //     const pullsRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/pulls?state=all&per_page=${pullsPerPage}&page=${page}`, { headers: authHeader });
+    //     const pullPage = pullsRes.data;
+    //     if (pullPage.length === 0) break;
+    //     for (let pr of pullPage) {
+    //       await Pull.create({
+    //         userId,
+    //         repoFullName: repoFullName,
+    //         number: pr.number,
+    //         title: pr.title,
+    //         state: pr.state,
+    //         authorLogin: pr.user.login,
+    //         createdAt: pr.created_at,
+    //         mergedAt: pr.merged_at,
+    //         url: pr.html_url
+    //       });
+    //     }
+    //     if (pullPage.length < pullsPerPage) break;
+    //     page++;
+    //   }
+    // }
+    // await updateSyncStatus(userId, { pulls: true });
 
-    // Issues
-    for (let repo of repos) {
-      const [owner, repoName] = repo.full_name.split('/');
-      const repoFullName = repo.full_name;
-      page = 1;
-      const issuesPerPage = 100;
-      while (true) {
-        const issuesRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/issues?state=all&per_page=${issuesPerPage}&page=${page}`, { headers: authHeader });
-        const issuePage = issuesRes.data;
-        if (issuePage.length === 0) break;
-        for (let issue of issuePage) {
-          if (issue.pull_request) continue;
-          await Issue.create({
-            userId,
-            repoFullName: repoFullName,
-            number: issue.number,
-            title: issue.title,
-            state: issue.state,
-            authorLogin: issue.user.login,
-            createdAt: issue.created_at,
-            closedAt: issue.closed_at,
-            url: issue.html_url
-          });
-        }
-        if (issuePage.length < issuesPerPage) break;
-        page++;
-      }
-    }
-    await updateSyncStatus(userId, { issues: true });
+    // for (let repo of repos) {
+    //   if (forkedRepoNames.has(repo.full_name)) continue;
+    //   const [owner, repoName] = repo.full_name.split('/');
+    //   const repoFullName = repo.full_name;
+    //   page = 1;
+    //   const issuesPerPage = 100;
+    //   while (true) {
+    //     const issuesRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/issues?state=all&per_page=${issuesPerPage}&page=${page}`, { headers: authHeader });
+    //     const issuePage = issuesRes.data;
+    //     if (issuePage.length === 0) break;
+    //     for (let issue of issuePage) {
+    //       if (issue.pull_request) continue;
+    //       await Issue.create({
+    //         userId,
+    //         repoFullName: repoFullName,
+    //         number: issue.number,
+    //         title: issue.title,
+    //         state: issue.state,
+    //         authorLogin: issue.user.login,
+    //         createdAt: issue.created_at,
+    //         closedAt: issue.closed_at,
+    //         url: issue.html_url
+    //       });
+    //     }
+    //     if (issuePage.length < issuesPerPage) break;
+    //     page++;
+    //   }
+    // }
+    // await updateSyncStatus(userId, { issues: true });
 
-    // Releases (Changelogs)
-    for (let repo of repos) {
-      const [owner, repoName] = repo.full_name.split('/');
-      const repoFullName = repo.full_name;
-      page = 1;
-      const relPerPage = 50;
-      while (true) {
-        const relRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/releases?per_page=${relPerPage}&page=${page}`, { headers: authHeader });
-        const relPage = relRes.data;
-        if (relPage.length === 0) break;
-        for (let rel of relPage) {
-          await Release.create({
-            userId,
-            repoFullName: repoFullName,
-            releaseId: rel.id,
-            tagName: rel.tag_name,
-            name: rel.name,
-            body: rel.body || "",
-            createdAt: rel.created_at,
-            publishedAt: rel.published_at,
-            url: rel.html_url
-          });
-        }
-        if (relPage.length < relPerPage) break;
-        page++;
-      }
-    }
-    await updateSyncStatus(userId, { changelogs: true });
+    // Releases (Changelogs) for all repos
+    // for (let repo of repos) {
+    //   const [owner, repoName] = repo.full_name.split('/');
+    //   const repoFullName = repo.full_name;
+    //   page = 1;
+    //   const relPerPage = 50;
+    //   while (true) {
+    //     const relRes = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/releases?per_page=${relPerPage}&page=${page}`, { headers: authHeader });
+    //     const relPage = relRes.data;
+    //     if (relPage.length === 0) break;
+    //     for (let rel of relPage) {
+    //       await Release.create({
+    //         userId,
+    //         repoFullName: repoFullName,
+    //         releaseId: rel.id,
+    //         tagName: rel.tag_name,
+    //         name: rel.name,
+    //         body: rel.body || "",
+    //         createdAt: rel.created_at,
+    //         publishedAt: rel.published_at,
+    //         url: rel.html_url
+    //       });
+    //     }
+    //     if (relPage.length < relPerPage) break;
+    //     page++;
+    //   }
+    // }
+    // await updateSyncStatus(userId, { changelogs: true });
+
+    // Bulk import forked repo data (commits, pulls, issues)
+    await bulkImportForkedRepos({ accessToken, userId });
 
     // All done
-    await updateSyncStatus(userId, { allSynced: true });
+    // await updateSyncStatus(userId, { allSynced: true });
   } catch (err) {
     console.error("Error fetching GitHub data:", err);
   }
@@ -320,8 +330,32 @@ const logout = (req, res) => {
   });
 };
 
+const removeIntegration = async (req, res) => {
+  const githubId = req.session.githubId;
+  try {
+    // Remove integration entry and all related data
+    await Integration.deleteOne({ githubId });
+    await Org.deleteMany({ userId: githubId });
+    await Repo.deleteMany({ userId: githubId });
+    await Commit.deleteMany({}); // Wipe all commits, regardless of userId
+    await Pull.deleteMany({ userId: githubId });
+    await Issue.deleteMany({ userId: githubId });
+    await GitUser.deleteMany({ userId: githubId });
+    await SyncStatus.deleteOne({ userId: githubId });
+    // Destroy session
+    req.session.destroy(err => {
+      if (err) console.error("Session destroy error:", err);
+    });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error removing integration:", err);
+    res.status(500).send("Failed to remove integration");
+  }
+};
+
 module.exports = {
   redirectToGitHub,
   handleGitHubCallback,
-  logout
+  logout,
+  removeIntegration
 }; 

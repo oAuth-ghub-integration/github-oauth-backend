@@ -1,4 +1,4 @@
-const { Integration, Org, Repo, Commit, Pull, Issue, Release, GitUser } = require('../models');
+const { Integration, Org, Repo, Commit, Pull, Issue, GitUser } = require('../models');
 const SyncStatus = require('../models/SyncStatus');
 
 // Check integration status
@@ -26,10 +26,9 @@ const removeIntegration = async (req, res) => {
     await Integration.deleteOne({ githubId });
     await Org.deleteMany({ userId: githubId });
     await Repo.deleteMany({ userId: githubId });
-    await Commit.deleteMany({ userId: githubId });
+    await Commit.deleteMany({ });
     await Pull.deleteMany({ userId: githubId });
     await Issue.deleteMany({ userId: githubId });
-    await Release.deleteMany({ userId: githubId });
     await GitUser.deleteMany({ userId: githubId });
     await SyncStatus.deleteOne({ userId: githubId });
     // Destroy session
@@ -71,10 +70,6 @@ const getEntityData = async (req, res) => {
         model = Issue;
         sort = { createdAt: -1 };
         break;
-      case 'changelogs':
-        model = Release;
-        sort = { publishedAt: -1 };
-        break;
       case 'users':
         model = GitUser;
         sort = { login: 1 };
@@ -83,6 +78,11 @@ const getEntityData = async (req, res) => {
         return res.status(400).send("Unknown entity");
     }
     let query = { userId: githubId };
+    if (entity === 'commits') {
+      // Log session githubId and count of matching commits
+      const count = await Commit.countDocuments({ userId: githubId });
+      console.log(`[getEntityData] Session githubId: ${githubId}, Commits in DB for this userId: ${count}`);
+    }
     if (search && search.trim().length > 0) {
       // Dynamically get all string field names except _id, __v, userId
       const allStringFields = Object.entries(model.schema.paths)
@@ -191,32 +191,15 @@ const getRepositoryIssues = async (req, res) => {
   }
 };
 
-// Get releases for a specific repository
-const getRepositoryReleases = async (req, res) => {
-  try {
-    const result = await paginatedQuery(
-      Release,
-      { userId: req.session.githubId, repoFullName: req.params.repoFullName },
-      { publishedAt: -1 },
-      req
-    );
-    res.json(result);
-  } catch (error) {
-    console.error('Error fetching releases:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
 // Get all data for a user (summary)
 const getSummary = async (req, res) => {
   try {
-    const [orgs, repos, commits, pulls, issues, releases] = await Promise.all([
+    const [orgs, repos, commits, pulls, issues] = await Promise.all([
       Org.countDocuments({ userId: req.session.githubId }),
       Repo.countDocuments({ userId: req.session.githubId }),
       Commit.countDocuments({ userId: req.session.githubId }),
       Pull.countDocuments({ userId: req.session.githubId }),
-      Issue.countDocuments({ userId: req.session.githubId }),
-      Release.countDocuments({ userId: req.session.githubId })
+      Issue.countDocuments({ userId: req.session.githubId })
     ]);
 
     res.json({
@@ -224,8 +207,7 @@ const getSummary = async (req, res) => {
       repositories: repos,
       commits: commits,
       pullRequests: pulls,
-      issues: issues,
-      releases: releases
+      issues: issues
     });
   } catch (error) {
     console.error('Error fetching summary:', error);
@@ -234,12 +216,12 @@ const getSummary = async (req, res) => {
 };
 
 const getSyncStatus = async (req, res) => {
-  console.log("getSyncStatus is working in githubController.js");
+  // console.log("getSyncStatus is working in githubController.js");
   const githubId = req.session.githubId;
-  console.log("githubId in getSyncStatus", githubId);
+  // console.log("githubId in getSyncStatus", githubId);
   if (!githubId) return res.status(401).json({ error: 'Not authenticated' });
   const status = await SyncStatus.findOne({ userId: githubId });
-  console.log("status in getSyncStatus", status);
+  // console.log("status in getSyncStatus", status);
   res.json(status || {});
 };
 
@@ -301,7 +283,6 @@ module.exports = {
   getRepositoryCommits,
   getRepositoryPulls,
   getRepositoryIssues,
-  getRepositoryReleases,
   getSummary,
   getSyncStatus,
   getUsers

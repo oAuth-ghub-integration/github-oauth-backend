@@ -5,7 +5,6 @@ const Repo = require('./Repo');
 const Commit = require('./Commit');
 const Pull = require('./Pull');
 const Issue = require('./Issue');
-const Release = require('./Release');
 const GitUser = require('./GitUser');
 
 module.exports = {
@@ -15,6 +14,5 @@ module.exports = {
   Commit,
   Pull,
   Issue,
-  Release,
   GitUser
 }; 
