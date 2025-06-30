@@ -10,7 +10,8 @@ const {
   getRepositoryPulls,
   getRepositoryIssues,
   getRepositoryReleases,
-  getSummary
+  getSummary,
+  getSyncStatus
 } = require('../controllers/githubController');
 
 const router = express.Router();
@@ -28,6 +29,9 @@ router.get('/status', getStatus);
 
 // Remove GitHub integration (disconnect)
 router.post('/remove', requireAuth, removeIntegration);
+
+// Get sync status
+router.get('/sync-status', requireAuth, getSyncStatus);
 
 // Generic route to get data by entity type
 router.get('/:entity', requireAuth, getEntityData);

@@ -1,4 +1,5 @@
 const { Integration, Org, Repo, Commit, Pull, Issue, Release, GitUser } = require('../models');
+const SyncStatus = require('../models/SyncStatus');
 
 // Check integration status
 const getStatus = async (req, res) => {
@@ -207,6 +208,16 @@ const getSummary = async (req, res) => {
   }
 };
 
+const getSyncStatus = async (req, res) => {
+  console.log("getSyncStatus is working in githubController.js");
+  const githubId = req.session.githubId;
+  console.log("githubId in getSyncStatus", githubId);
+  if (!githubId) return res.status(401).json({ error: 'Not authenticated' });
+  const status = await SyncStatus.findOne({ userId: githubId });
+  console.log("status in getSyncStatus", status);
+  res.json(status || {});
+};
+
 module.exports = {
   getStatus,
   removeIntegration,
@@ -218,5 +229,6 @@ module.exports = {
   getRepositoryPulls,
   getRepositoryIssues,
   getRepositoryReleases,
-  getSummary
+  getSummary,
+  getSyncStatus
 }; 
